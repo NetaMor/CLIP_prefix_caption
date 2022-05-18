@@ -18,7 +18,7 @@ from transformers import (
 import skimage.io as io
 import PIL.Image
 
-import cog
+#import cog
 
 # import torch
 
@@ -44,9 +44,13 @@ WEIGHTS_PATHS = {
 D = torch.device
 CPU = torch.device("cpu")
 
+weights_path = './pretrained_models/'
 
-class Predictor(cog.Predictor):
-    def setup(self):
+
+#class Predictor(cog.Predictor):
+class Predictor():
+    #def setup(self):
+    def __init__(self):
         """Load the model into memory to make running multiple predictions efficient"""
         self.device = torch.device("cuda")
         self.clip_model, self.preprocess = clip.load(
@@ -58,12 +62,12 @@ class Predictor(cog.Predictor):
         self.prefix_length = 10
         for key, weights_path in WEIGHTS_PATHS.items():
             model = ClipCaptionModel(self.prefix_length)
-            model.load_state_dict(torch.load(weights_path, map_location=CPU))
+            model.load_state_dict(torch.load('./checkpoints/RSICD_prefix-009.pt', map_location=CPU))#'./pretrained_models/'+weights_path, map_location=CPU))
             model = model.eval()
             model = model.to(self.device)
             self.models[key] = model
 
-    @cog.input("image", type=cog.Path, help="Input image")
+    """"@cog.input("image", type=cog.Path, help="Input image")
     @cog.input(
         "model",
         type=str,
@@ -76,7 +80,7 @@ class Predictor(cog.Predictor):
         type=bool,
         default=False,
         help="Whether to apply beam search to generate the output text",
-    )
+    )"""
     def predict(self, image, model, use_beam_search):
         """Run a single prediction on the model"""
         image = io.imread(image)
@@ -300,3 +304,20 @@ def generate2(
             generated_list.append(output_text)
 
     return generated_list[0]
+
+if __name__ == '__main__':
+
+    for file in os.listdir("./data/koronos"):
+        UPLOADED_FILE = os.path.join("./data/koronos",file)
+        print(file)
+        prefix_length = 10
+        model = 'coco'#'conceptual-captions'
+        Pre = Predictor()
+        g = Pre.predict(UPLOADED_FILE,model, False)
+
+        print(g)
+        print(80*"*")
+
+
+
+

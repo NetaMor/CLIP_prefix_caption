@@ -11,6 +11,11 @@ import sys
 import argparse
 import json
 from typing import Tuple, Optional, Union
+from torch.utils.tensorboard import SummaryWriter
+from eval_func.bleu.bleu import Bleu
+from eval_func.rouge.rouge import Rouge
+from eval_func.cider.cider import Cider
+
 
 
 class MappingType(Enum):
@@ -331,15 +336,26 @@ def train(dataset: ClipCocoDataset, model: ClipCaptionModel, args,
                 model.state_dict(),
                 os.path.join(output_dir, f"{output_prefix}-{epoch:03d}.pt"),
             )
+            writer.add_scalar('Train_Loss_AVG', loss, epoch)
+            #writer.add_scalar('Val_Loss_AVG', val_losses_avg, epoch)
+            #writer.add_scalar('Train_top5acc', train_top5accs_val, epoch)
+            #writer.add_scalar('Val_BLEU1', metrics['Bleu_1'], epoch)
+            #writer.add_scalar('Val_BLEU2', metrics['Bleu_2'], epoch)
+            #writer.add_scalar('Val_BLEU3', metrics['Bleu_3'], epoch)
+            #writer.add_scalar('Val_BLEU4', recent_bleu4, epoch)
+            #writer.add_scalar('Val_ROUGE_L', metrics["ROUGE_L"], epoch)
+            #writer.add_scalar('Val_CIDEr', metrics["CIDEr"], epoch)
+        writer.flush()
     return model
 
 
-def main():
+def main(prefix):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data', default='./data/coco/oscar_split_train.pkl')
+    #parser.add_argument('--data', default='./data/coco/oscar_split_train.pkl')
+    parser.add_argument('--data', default='./data/RSICD/oscar_split_ViT-B_32_train.pkl')
     parser.add_argument('--out_dir', default='./checkpoints')
-    parser.add_argument('--prefix', default='coco_prefix', help='prefix for saved filenames')
-    parser.add_argument('--epochs', type=int, default=10)
+    parser.add_argument('--prefix', default=prefix, help='prefix for saved filenames')#'coco_prefix'
+    parser.add_argument('--epochs', type=int, default=20)
     parser.add_argument('--save_every', type=int, default=1)
     parser.add_argument('--prefix_length', type=int, default=10)
     parser.add_argument('--prefix_length_clip', type=int, default=10)
@@ -363,8 +379,13 @@ def main():
                                   num_layers=args.num_layers, mapping_type=args.mapping_type)
         print("Train both prefix and GPT")
         sys.stdout.flush()
-    train(dataset, model, args, output_dir=args.out_dir, output_prefix=args.prefix)
+    train(dataset, model, args, output_dir=args.out_dir+'/'+args.prefix, output_prefix=args.prefix)
+
 
 
 if __name__ == '__main__':
-    main()
+    prefix = 'rsicd_prefix_GPT_20epoch'
+    log_dir = f'./checkpoints/'+prefix
+    os.mkdir(log_dir)
+    writer = SummaryWriter(log_dir=log_dir)
+    main(prefix)
