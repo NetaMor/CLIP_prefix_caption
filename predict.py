@@ -50,7 +50,7 @@ weights_path = './pretrained_models/'
 #class Predictor(cog.Predictor):
 class Predictor():
     #def setup(self):
-    def __init__(self):
+    def __init__(self,path_weights_model,key):
         """Load the model into memory to make running multiple predictions efficient"""
         self.device = torch.device("cuda")
         self.clip_model, self.preprocess = clip.load(
@@ -60,12 +60,17 @@ class Predictor():
 
         self.models = {}
         self.prefix_length = 10
-        for key, weights_path in WEIGHTS_PATHS.items():
+        model = ClipCaptionModel(self.prefix_length)
+        model.load_state_dict(torch.load(path_weights_model, map_location=CPU))#'./pretrained_models/'+weights_path, map_location=CPU))
+        model = model.eval()
+        model = model.to(self.device)
+        self.models[key] = model
+        """for key, weights_path in WEIGHTS_PATHS.items():
             model = ClipCaptionModel(self.prefix_length)
             model.load_state_dict(torch.load('./checkpoints/RSICD_prefix-009.pt', map_location=CPU))#'./pretrained_models/'+weights_path, map_location=CPU))
             model = model.eval()
             model = model.to(self.device)
-            self.models[key] = model
+            self.models[key] = model"""
 
     """"@cog.input("image", type=cog.Path, help="Input image")
     @cog.input(
@@ -299,6 +304,8 @@ def generate2(
                 if stop_token_index == next_token.item():
                     break
 
+            if len(tokens.cpu().numpy())==0:
+                g = 0
             output_list = list(tokens.squeeze().cpu().numpy())
             output_text = tokenizer.decode(output_list)
             generated_list.append(output_text)
@@ -306,13 +313,14 @@ def generate2(
     return generated_list[0]
 
 if __name__ == '__main__':
+    path_weights_model = './checkpoints/rsicd_prefix_GPT_20epoch/rsicd_prefix_GPT_20epoch-019.pt'
 
     for file in os.listdir("./data/koronos"):
         UPLOADED_FILE = os.path.join("./data/koronos",file)
         print(file)
         prefix_length = 10
         model = 'coco'#'conceptual-captions'
-        Pre = Predictor()
+        Pre = Predictor(path_weights_model,model)
         g = Pre.predict(UPLOADED_FILE,model, False)
 
         print(g)

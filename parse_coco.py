@@ -12,7 +12,7 @@ import argparse
 def main(clip_model_type: str):
     device = torch.device('cuda:0')
     clip_model_name = clip_model_type.replace('/', '_')
-    out_path = f"./data/RSICD/oscar_split_{clip_model_name}_train.pkl"
+    out_path = f"./data/RSICD/oscar_split_{clip_model_name}_val.pkl"
     clip_model, preprocess = clip.load(clip_model_type, device=device, jit=False)
     with open('./data/RSICD/annotations/dataset_rsicd.json', 'r') as f:
         data = json.load(f)
@@ -22,7 +22,7 @@ def main(clip_model_type: str):
     j = 0
     for i in tqdm(range(len(data["images"]))):
         d = data["images"][i]
-        if d['split']=='train':
+        if d['split']=='val':
             img_id = d["filename"]
             filename = f"./data/RSICD/RSICD_images/{img_id}"
             if not os.path.isfile(filename):

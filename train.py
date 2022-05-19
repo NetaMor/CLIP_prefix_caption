@@ -12,9 +12,11 @@ import argparse
 import json
 from typing import Tuple, Optional, Union
 from torch.utils.tensorboard import SummaryWriter
+import predict
 from eval_func.bleu.bleu import Bleu
 from eval_func.rouge.rouge import Rouge
 from eval_func.cider.cider import Cider
+import nltk
 
 
 
@@ -49,7 +51,7 @@ class ClipCocoDataset(Dataset):
         if self.normalize_prefix:
             prefix = prefix.float()
             prefix = prefix / prefix.norm(2, -1)
-        return tokens, mask, prefix
+        return tokens, mask, prefix, self.captions
 
     def __init__(self, data_path: str,  prefix_length: int, gpt2_type: str = "gpt2",
                  normalize_prefix=False):
@@ -292,8 +294,80 @@ def load_model(config_path: str, epoch_or_latest: Union[str, int] = '_latest'):
         print(f"{model_path} is not exist")
     return model, parser
 
+def get_eval_score(references, hypotheses):
+    scorers = [
+        (Bleu(4), ["Bleu_1", "Bleu_2", "Bleu_3", "Bleu_4"]),
+        (Rouge(), "ROUGE_L"),
+        (Cider(), "CIDEr")
+    ]
 
-def train(dataset: ClipCocoDataset, model: ClipCaptionModel, args,
+    hypo = [[' '.join(hypo)] for hypo in [[str(x) for x in hypo] for hypo in hypotheses]]
+    #ref = [[' '.join(reft) for reft in reftmp] for reftmp in
+     #      [[[str(x) for x in reft] for reft in reftmp] for reftmp in references]]
+    ref = references
+
+    score = []
+    method = []
+    for scorer, method_i in scorers:
+        score_i, scores_i = scorer.compute_score(ref, hypo)
+        score.extend(score_i) if isinstance(score_i, list) else score.append(score_i)
+        method.extend(method_i) if isinstance(method_i, list) else method.append(method_i)
+        print("{} {}".format(method_i, score_i))
+    score_dict = dict(zip(method, score))
+
+    return score_dict
+
+def validate(dataset_val,  model: ClipCaptionModel, args):
+    model.eval()
+    device = torch.device('cuda:0')
+    batch_size = args.bs
+    epochs = args.epochs
+    model = model.to(device)
+    val_dataloader = DataLoader(dataset_val, batch_size=batch_size, shuffle=True, drop_last=True)
+    # save_config(args)
+    running_loss_val = 0.0
+    bleu4 = 0.0
+    meteor = 0.0
+    count_gen_sen = 0.0
+    ref = []
+    hyp = []
+    with torch.no_grad():
+        for idx, (tokens, mask, prefix, caption) in enumerate(val_dataloader):
+            tokens, mask, prefix = tokens.to(device), mask.to(device), prefix.to(device, dtype=torch.float32)
+            outputs = model(tokens, prefix, mask)
+            logits = outputs.logits[:, dataset_val.prefix_length - 1: -1]
+            loss = nnf.cross_entropy(logits.reshape(-1, logits.shape[-1]), tokens.flatten(), ignore_index=0)
+            running_loss_val += loss.item()
+            prefix_np = prefix.cpu().numpy()
+            for i in range(2):##range(len(prefix_np)):
+                pre = prefix[i,:]
+                cap = caption[i][0]
+                #pre = torch.tensor(pre).to(device)
+                use_beam_search=False
+                prefix_embed = model.clip_project(pre).reshape(1, dataset_val.prefix_length, -1)
+                if use_beam_search:
+                    generate_sen = predict.generate_beam(model, GPT2Tokenizer.from_pretrained("gpt2"), embed=prefix_embed)[0]
+                else:
+                    generate_sen = predict.generate2(model, GPT2Tokenizer.from_pretrained("gpt2"), embed=prefix_embed)
+                #for sen in range(len(generate_sen)):
+                count_gen_sen +=1
+                sen = generate_sen.split(' ')
+                cap = cap.split(' ')
+                bleu4 += nltk.translate.bleu_score.modified_precision(cap, sen, n=4)
+                #meteor += nltk.translate.meteor_score.single_meteor_score(cap, sen)
+        #ref.append(cap)
+        #hyp.append(generate_sen)
+        #metrics = get_eval_score(ref, hyp)
+        bleu4_avg = round(bleu4/count_gen_sen,4)
+        #meteor_avg = round(meteor/count_gen_sen, 4)
+        print(f"Val Bleu4:{bleu4_avg}")
+        #print(f"Val meteor:{meteor_avg}")
+        print(f"Val loss- avg: {running_loss_val / len(val_dataloader)}")
+        return running_loss_val, bleu4_avg
+
+
+
+def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
           lr: float = 2e-5, warmup_steps: int = 5000, output_dir: str = ".", output_prefix: str = ""):
 
     device = torch.device('cuda:0')
@@ -309,11 +383,13 @@ def train(dataset: ClipCocoDataset, model: ClipCaptionModel, args,
         optimizer, num_warmup_steps=warmup_steps, num_training_steps=epochs * len(train_dataloader)
     )
     # save_config(args)
+    running_loss = 0.0
     for epoch in range(epochs):
         print(f">>> Training epoch {epoch}")
+        model.train()
         sys.stdout.flush()
         progress = tqdm(total=len(train_dataloader), desc=output_prefix)
-        for idx, (tokens, mask, prefix) in enumerate(train_dataloader):
+        for idx, (tokens, mask, prefix, caption) in enumerate(train_dataloader):
             model.zero_grad()
             tokens, mask, prefix = tokens.to(device), mask.to(device), prefix.to(device, dtype=torch.float32)
             outputs = model(tokens, prefix, mask)
@@ -330,13 +406,27 @@ def train(dataset: ClipCocoDataset, model: ClipCaptionModel, args,
                     model.state_dict(),
                     os.path.join(output_dir, f"{output_prefix}_latest.pt"),
                 )
+            #metrics = get_eval_score(references, hypotheses)
+            running_loss += loss.item()
         progress.close()
+
         if epoch % args.save_every == 0 or epoch == epochs - 1:
             torch.save(
                 model.state_dict(),
                 os.path.join(output_dir, f"{output_prefix}-{epoch:03d}.pt"),
             )
-            writer.add_scalar('Train_Loss_AVG', loss, epoch)
+
+
+        print(f"Training loss- avg {epoch}: {running_loss / len(train_dataloader)}")
+
+        running_loss_val, bleu4_avg = validate (dataset_val, model, args)
+        writer.add_scalar('Train_Loss_AVG', running_loss, epoch)
+        writer.add_scalar('VAL_Loss_AVG', running_loss_val, epoch)
+        writer.add_scalar('VAL_Bleu4_AVG', bleu4_avg, epoch)
+        running_loss = 0.0
+
+
+
             #writer.add_scalar('Val_Loss_AVG', val_losses_avg, epoch)
             #writer.add_scalar('Train_top5acc', train_top5accs_val, epoch)
             #writer.add_scalar('Val_BLEU1', metrics['Bleu_1'], epoch)
@@ -353,9 +443,10 @@ def main(prefix):
     parser = argparse.ArgumentParser()
     #parser.add_argument('--data', default='./data/coco/oscar_split_train.pkl')
     parser.add_argument('--data', default='./data/RSICD/oscar_split_ViT-B_32_train.pkl')
+    parser.add_argument('--data_val', default='./data/RSICD/oscar_split_ViT-B_32_val.pkl')
     parser.add_argument('--out_dir', default='./checkpoints')
     parser.add_argument('--prefix', default=prefix, help='prefix for saved filenames')#'coco_prefix'
-    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--epochs', type=int, default=30)
     parser.add_argument('--save_every', type=int, default=1)
     parser.add_argument('--prefix_length', type=int, default=10)
     parser.add_argument('--prefix_length_clip', type=int, default=10)
@@ -368,6 +459,7 @@ def main(prefix):
     args = parser.parse_args()
     prefix_length = args.prefix_length
     dataset = ClipCocoDataset(args.data, prefix_length, normalize_prefix=args.normalize_prefix)
+    dataset_val = ClipCocoDataset(args.data_val, prefix_length, normalize_prefix=args.normalize_prefix)
     prefix_dim = 640 if args.is_rn else 512
     args.mapping_type = {'mlp': MappingType.MLP, 'transformer': MappingType.Transformer}[args.mapping_type]
     if args.only_prefix:
@@ -379,12 +471,12 @@ def main(prefix):
                                   num_layers=args.num_layers, mapping_type=args.mapping_type)
         print("Train both prefix and GPT")
         sys.stdout.flush()
-    train(dataset, model, args, output_dir=args.out_dir+'/'+args.prefix, output_prefix=args.prefix)
+    train(dataset,dataset_val, model, args, output_dir=args.out_dir+'/'+args.prefix, output_prefix=args.prefix)
 
 
 
 if __name__ == '__main__':
-    prefix = 'rsicd_prefix_GPT_20epoch'
+    prefix = 'rsicd_prefix_GPT_30epoch'
     log_dir = f'./checkpoints/'+prefix
     os.mkdir(log_dir)
     writer = SummaryWriter(log_dir=log_dir)
