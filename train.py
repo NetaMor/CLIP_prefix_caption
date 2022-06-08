@@ -1,4 +1,5 @@
 import torch
+#torch.cuda.current_device()
 import torch.nn as nn
 from torch.nn import functional as nnf
 from torch.utils.data import Dataset, DataLoader
@@ -19,7 +20,6 @@ from eval_func.cider.cider import Cider
 import nltk
 from nltk.translate import meteor
 from nltk import word_tokenize
-
 
 
 class MappingType(Enum):
@@ -338,6 +338,9 @@ def validate(dataset_val,  model: ClipCaptionModel, args, epoch):
     count_gen_sen = 0.0
     ref = []
     hyp = []
+    e_val_bleu = 5
+    hyp = []
+    ref = []
     with torch.no_grad():
         for idx, (tokens, mask, prefix, caption) in enumerate(val_dataloader):
             tokens, mask, prefix = tokens.to(device), mask.to(device), prefix.to(device, dtype=torch.float32)
@@ -345,14 +348,14 @@ def validate(dataset_val,  model: ClipCaptionModel, args, epoch):
             logits = outputs.logits[:, dataset_val.prefix_length - 1: -1]
             loss = nnf.cross_entropy(logits.reshape(-1, logits.shape[-1]), tokens.flatten(), ignore_index=0)
             running_loss_val += loss.item()
-            if (epoch+1)%10==0:
-                num_to_gen = int(list(prefix.size())[0]*0.5)
+            if ((epoch+1)%e_val_bleu==0 or (epoch+1)==args.epochs):
+                num_to_gen = int(list(prefix.size())[0])#*0.2)
                 #num_to_gen = int(list(prefix.size())[0]*0.1)
                 for i in range(num_to_gen):
                     pre = prefix[i,:]
                     cap = caption[i]
                     #pre = torch.tensor(pre).to(device)
-                    use_beam_search=True
+                    use_beam_search=False
                     prefix_embed = model.clip_project(pre).reshape(1, dataset_val.prefix_length, -1)
                     if use_beam_search:
                         generate_sen = predict.generate_beam(model, GPT2Tokenizer.from_pretrained("gpt2"), embed=prefix_embed)[0]
@@ -362,25 +365,31 @@ def validate(dataset_val,  model: ClipCaptionModel, args, epoch):
                     if len(generate_sen)<1:
                         print('empty sentence')
                     count_gen_sen +=1
-                    sen = generate_sen.strip()#.split('.')[0]
-                    sen = sen.replace('.', ' .')
+                    sen = generate_sen.strip().strip('.')+'.'#.split('.')[0]
+                    #sen = sen.replace('.', ' .')
                     sen = sen.split(' ')
+                    hyp = hyp+[sen]
+
+                    cap = cap.lower()
                     cap = cap.strip()#.split('.')[0]
                     #cap = cap.replace('.',' .')
                     cap = cap.split(' ')
-                    bleu_A += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0.25, 0.25, 0.25, 0.25))
-                    bleu1 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(1, 0, 0 ,0))
-                    bleu2 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 1, 0, 0))
-                    bleu3 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 0, 1, 0))
-                    bleu4 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 0, 0, 1))
+                    ref = ref +[[cap]]
+                    #metrics = get_eval_score([cap], [sen])
 
-                    #meteor_s += meteor(cap, sen)
-        if (epoch+1) % 10 == 0:
-            bleu_A_avg = round(bleu_A / count_gen_sen, 4)
-            writer.add_scalar('VAL_bleu_A_AVG', bleu_A_avg, epoch)
-            print(f"Val bleu_A:{bleu_A_avg}")
+        if ((epoch+1)%e_val_bleu==0 or (epoch+1)==args.epochs):
+            bleu_A = nltk.translate.bleu_score.corpus_bleu(ref, hyp, weights=(0.25, 0.25, 0.25, 0.25))
+            #bleu1 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(1, 0, 0 ,0))
+            #bleu2 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 1, 0, 0))
+            #bleu3 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 0, 1, 0))
+            #bleu4 += nltk.translate.bleu_score.sentence_bleu([cap], sen, weights=(0, 0, 0, 1))
 
-            bleu1_avg = round(bleu1 / count_gen_sen, 4)
+                #meteor_s += meteor(cap, sen)
+            #bleu_A_avg = round(bleu_A / count_gen_sen, 4)
+            writer.add_scalar('VAL_bleu_A_AVG', bleu_A, epoch)
+            print(f"Val bleu_A:{bleu_A}")
+
+            """bleu1_avg = round(bleu1 / count_gen_sen, 4)
             writer.add_scalar('VAL_Bleu1_AVG', bleu1_avg, epoch)
             print(f"Val Bleu1:{bleu1_avg}")
 
@@ -394,20 +403,20 @@ def validate(dataset_val,  model: ClipCaptionModel, args, epoch):
 
             bleu4_avg = round(bleu4 / count_gen_sen, 4)
             writer.add_scalar('VAL_Bleu4_AVG', bleu4_avg, epoch)
-            print(f"Val Bleu4:{bleu4_avg}")
+            print(f"Val Bleu4:{bleu4_avg}")"""
 
             #meteor_avg = round(meteor/count_gen_sen, 4)
             #writer.add_scalar('VAL_Meteor_AVG', meteor_avg, epoch)
             #print(f"Val meteor:{meteor_avg}")
 
-
-        print(f"Val loss- avg: {running_loss_val / len(val_dataloader)}")
-        return running_loss_val
+        running_loss_val_avg = running_loss_val / len(val_dataloader)
+        print(f"Val loss- avg: {running_loss_val_avg}")
+        return running_loss_val_avg
 
 
 
 def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
-          lr: float = 2e-5, warmup_steps: int = 5000, output_dir: str = ".", output_prefix: str = ""):
+          lr: float = 2e-5, warmup_steps: int = 2190, output_dir: str = ".", output_prefix: str = ""):
 
     device = torch.device('cuda:0')
     batch_size = args.bs
@@ -418,9 +427,9 @@ def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
     model.train()
     optimizer = AdamW(model.parameters(), lr=lr)
     train_dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, drop_last=True)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer, num_warmup_steps=warmup_steps, num_training_steps=epochs * len(train_dataloader)
-    )
+    #scheduler = get_linear_schedule_with_warmup(
+    #    optimizer, num_warmup_steps=warmup_steps, num_training_steps=epochs * len(train_dataloader)
+    #)
     # save_config(args)
     running_loss = 0.0
     running_loss_val_pre = 0.0
@@ -437,16 +446,15 @@ def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
             loss = nnf.cross_entropy(logits.reshape(-1, logits.shape[-1]), tokens.flatten(), ignore_index=0)
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            #scheduler.step()
             optimizer.zero_grad()
             progress.set_postfix({"loss": loss.item()})
             progress.update()
-            if (idx + 1) % 10000 == 0:
-                torch.save(
-                    model.state_dict(),
-                    os.path.join(output_dir, f"{output_prefix}_latest.pt"),
-                )
-            #metrics = get_eval_score(references, hypotheses)
+            #if (idx + 1) % 10000 == 0:
+            #   torch.save(
+            #        model.state_dict(),
+            #        os.path.join(output_dir, f"{output_prefix}_latest.pt"),
+            #    )
             running_loss += loss.item()
         progress.close()
 
@@ -456,17 +464,17 @@ def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
                 os.path.join(output_dir, f"{output_prefix}-{epoch:03d}.pt"),
             )
 
-
-        print(f"Training loss- avg {epoch}: {running_loss / len(train_dataloader)}")
+        running_loss_avg = running_loss / len(train_dataloader)
+        print(f"Training loss- avg {epoch}: {running_loss_avg}")
 
         running_loss_val = validate (dataset_val, model, args, epoch)
-        running_loss_val_pre = running_loss_val
-        writer.add_scalar('Train_Loss_AVG', running_loss, epoch)
+        #running_loss_val_pre = running_loss_val
+        writer.add_scalar('Train_Loss_AVG', running_loss_avg, epoch)
         writer.add_scalar('VAL_Loss_AVG', running_loss_val, epoch)
 
-        if running_loss_val==running_loss_val_pre:
+        """if running_loss_val==running_loss_val_pre:
             for g in optimizer.param_groups:
-                g['lr'] = 0.001
+                g['lr'] = 0.001"""
 
         running_loss = 0.0
 
@@ -480,22 +488,22 @@ def train(dataset: ClipCocoDataset,dataset_val, model: ClipCaptionModel, args,
             #writer.add_scalar('Val_BLEU4', recent_bleu4, epoch)
             #writer.add_scalar('Val_ROUGE_L', metrics["ROUGE_L"], epoch)
             #writer.add_scalar('Val_CIDEr', metrics["CIDEr"], epoch)
-        writer.flush()
+    writer.flush()
     return model
 
 
 def main(prefix='rsicd_prefix_tran_beam_20epochs',epoch=20):
     parser = argparse.ArgumentParser()
     #parser.add_argument('--data', default='./data/coco/oscar_split_train.pkl')
-    parser.add_argument('--data', default='./data/RSICD/oscar_split_ViT-B_32_train.pkl')
-    parser.add_argument('--data_val', default='./data/RSICD/oscar_split_ViT-B_32_val.pkl')
+    parser.add_argument('--data', default=  './data/koronos/oscar_split_ViT-B_32_train.pkl')#'./data/koronos/oscar_split_ViT-B_32_train.pkl') #'./data/RSICD/oscar_split_ViT-B_32_train.pkl')
+    parser.add_argument('--data_val', default= './data/koronos/oscar_split_ViT-B_32_val.pkl')#'./data/koronos/oscar_split_ViT-B_32_val.pkl')#'./data/RSICD/oscar_split_ViT-B_32_val.pkl')
     parser.add_argument('--out_dir', default='./checkpoints')
     parser.add_argument('--prefix', default=prefix, help='prefix for saved filenames')#'coco_prefix'
     parser.add_argument('--epochs', type=int, default=epoch)
     parser.add_argument('--save_every', type=int, default=1)
     parser.add_argument('--prefix_length', type=int, default=10)
     parser.add_argument('--prefix_length_clip', type=int, default=10)
-    parser.add_argument('--bs', type=int, default=40)
+    parser.add_argument('--bs', type=int, default=20)
     parser.add_argument('--only_prefix', dest='only_prefix', action='store_true')
     parser.add_argument('--mapping_type', type=str, default='mlp', help='mlp/transformer')
     parser.add_argument('--num_layers', type=int, default=8)
@@ -516,30 +524,30 @@ def main(prefix='rsicd_prefix_tran_beam_20epochs',epoch=20):
                                   num_layers=args.num_layers, mapping_type=args.mapping_type)
         print("Train both prefix and GPT")
         sys.stdout.flush()
-    #CPU = torch.device("cpu")
-    #model.load_state_dict(torch.load('./checkpoints/rsicd_prefix_GPT_30epoch/rsicd_prefix_GPT_30epoch-029.pt', map_location=CPU))
+    CPU = torch.device("cpu")
+    model.load_state_dict(torch.load('./checkpoints/rsicd_prefix_GPT_beam_30epoch_lrS_2190_trail/rsicd_prefix_GPT_beam_30epoch_lrS_2190_trail-014.pt', map_location=CPU))
     train(dataset,dataset_val, model, args, output_dir=args.out_dir+'/'+args.prefix, output_prefix=args.prefix)
 
 
 
 if __name__ == '__main__':
-    with open('./data/RSICD/oscar_split_ViT-B_32_train.pkl', 'rb') as f:
+    """with open('./data/RSICD/oscar_split_ViT-B_32_train.pkl', 'rb') as f:
         all_data = pickle.load(f)
     print("Data size is %0d" % len(all_data["clip_embedding"]))
     sys.stdout.flush()
 
 
 
-    writer = SummaryWriter(log_dir=f'./checkpoints/'+'rsicd_prefix_tran_beam_20epochs')
-    main()
+    writer = SummaryWriter(log_dir=f'./checkpoints/'+'rsicd_prefix_tran_beam_20epochs')"""
+    #main()
 
-    """epochs= ['15']
+    epochs= ['25']
     for e in epochs:
-        prefix = 'rsicd_prefix_GPT_beam_'+e
+        prefix = 'kronos_prefix_GPT_30_14epoch_lrS_2190_trail_25sh'
         log_dir = f'./checkpoints/'+prefix
         os.mkdir(log_dir)
         writer = SummaryWriter(log_dir=log_dir)
-        main(prefix, int(e))"""
+        main(prefix, int(e))
 
     #        model.load_state_dict(torch.load(path_weights_model, map_location=CPU))#'./pretrained_models/'+weights_path, map_location=CPU))
     #python train.py --only_prefix --data ./data/RSICD/oscar_split_ViT-B_32_train.pkl --out_dir ./checkpoints --mapping_type transformer  --num_layres 8 --prefix_length 40 --prefix_length_clip 40

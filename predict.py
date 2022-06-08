@@ -1,8 +1,10 @@
 # Prediction interface for Cog ⚙️
 # Reference: https://github.com/replicate/cog/blob/main/docs/python.md
-
+import cv2
 import clip
 import os
+
+import pandas as pd
 from torch import nn
 import numpy as np
 import torch
@@ -17,6 +19,8 @@ from transformers import (
 )
 import skimage.io as io
 import PIL.Image
+import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 
 #import cog
 
@@ -320,11 +324,12 @@ def generate2(
     return generated_list[0]
 
 if __name__ == '__main__':
-    path_weights_model = './checkpoints/rsicd_prefix_GPT_30epoch/rsicd_prefix_GPT_30epoch-015.pt'
-    #path_weights_model = './checkpoints/rsicd_prefix_GPT_beam_50epoch/rsicd_prefix_GPT_beam_50epoch-049.pt'
+    #path_weights_model = './checkpoints/koronos_rsicd_prefix_29_GPT_beam15/koronos_rsicd_prefix_GPT_beam15-012.pt'
+    #path_weights_model = './checkpoints/rsicd_prefix_GPT_beam_30epoch_lrS_2190/rsicd_prefix_GPT_beam_30epoch_lrS_2190-014.pt'
+    path_weights_model = './checkpoints/rsicd_prefix_GPT_beam_50epoch/rsicd_prefix_GPT_beam_50epoch-049.pt'
     path_i = "beach_108.jpg"#,"beach_108.jpg","airport_348.jpg","commercial_36.jpg","farmland_366.jpg"
 
-    UPLOADED_FILE = os.path.join("./data/RSICD/RSICD_images/", path_i)
+    """UPLOADED_FILE = os.path.join("./data/RSICD/RSICD_images/", path_i)
     #print(file)
     im = PIL.Image.open(UPLOADED_FILE)
     im.show()
@@ -335,20 +340,31 @@ if __name__ == '__main__':
     beam_gen = Pre.predict(UPLOADED_FILE, model, True)
 
     print(f'gen2: '+gen2)
-    print(f'beam_gen: ' + beam_gen)
+    print(f'beam_gen: ' + beam_gen)"""
+    prefix_length = 10
+    model = 'coco'  # 'conceptual-captions'
+    Pre = Predictor(path_weights_model, model)
+    gen_to_save = pd.DataFrame(columns=['img_type','img_name', 'caption_gen2', 'caption_beamGen'])
+    for doc in os.listdir("./data/koronos/test_kor"):
+        for file in os.listdir("./data/koronos/test_kor/"+doc):
+            UPLOADED_FILE = os.path.join("./data/koronos/test_kor",doc, file)
+            print(file)
 
-    """for file in os.listdir("./data/koronos/koronos_rgb"):
-        UPLOADED_FILE = os.path.join("./data/koronos/koronos_rgb",file)
-        print(file)
-        prefix_length = 10
-        model = 'coco'#'conceptual-captions'
-        Pre = Predictor(path_weights_model,model)
-        gen2 = Pre.predict(UPLOADED_FILE,model, False)
-        beam_gen = Pre.predict(UPLOADED_FILE, model, True)
+            gen2 = Pre.predict(UPLOADED_FILE,model, False)
+            beam_gen = Pre.predict(UPLOADED_FILE, model, True)
 
-        print(gen2)
-        print(beam_gen)
-        print(80*"*")"""
+            img = cv2.imread(UPLOADED_FILE)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = PIL.Image.fromarray(img)
+            img.show()
+
+            print(gen2)
+            print(beam_gen)
+            print(80*"*")
+
+            gen_to_save = gen_to_save.append({'img_type':str(doc),'img_name':str(file), 'caption_gen2':gen2, 'caption_beamGen':beam_gen},ignore_index=True)
+
+    gen_to_save.to_csv('/home/dvir/Desktop/Projects/CLIP_prefix_caption/data/koronos/models_results/'+path_weights_model.split('/')[-1].split('.')[0]+'.csv')
 
 
 
