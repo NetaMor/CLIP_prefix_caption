@@ -525,7 +525,8 @@ def main(prefix='rsicd_prefix_tran_beam_20epochs',epoch=20):
         print("Train both prefix and GPT")
         sys.stdout.flush()
     CPU = torch.device("cpu")
-    model.load_state_dict(torch.load('./checkpoints/rsicd_prefix_GPT_beam_30epoch_lrS_2190_trail/rsicd_prefix_GPT_beam_30epoch_lrS_2190_trail-014.pt', map_location=CPU))
+    #model.load_state_dict(torch.load('./pretrained_models/conceptual_weights.pt', map_location=CPU))
+    model.load_state_dict(torch.load('./checkpoints/rsicd_prefix_coco_origin/rsicd_prefix_coco_origin-004.pt', map_location=CPU))
     train(dataset,dataset_val, model, args, output_dir=args.out_dir+'/'+args.prefix, output_prefix=args.prefix)
 
 
@@ -541,13 +542,22 @@ if __name__ == '__main__':
     writer = SummaryWriter(log_dir=f'./checkpoints/'+'rsicd_prefix_tran_beam_20epochs')"""
     #main()
 
-    epochs= ['25']
+
+    epochs= ['5']
+    for e in epochs:
+        prefix = 'kronos_rsicd_prefix_coco_origin_004'
+        log_dir = f'./checkpoints/'+prefix
+        os.mkdir(log_dir)
+        writer = SummaryWriter(log_dir=log_dir)
+        main(prefix, int(e))
+
+    """epochs= ['25']
     for e in epochs:
         prefix = 'kronos_prefix_GPT_30_14epoch_lrS_2190_trail_25sh'
         log_dir = f'./checkpoints/'+prefix
         os.mkdir(log_dir)
         writer = SummaryWriter(log_dir=log_dir)
-        main(prefix, int(e))
+        main(prefix, int(e))"""
 
     #        model.load_state_dict(torch.load(path_weights_model, map_location=CPU))#'./pretrained_models/'+weights_path, map_location=CPU))
     #python train.py --only_prefix --data ./data/RSICD/oscar_split_ViT-B_32_train.pkl --out_dir ./checkpoints --mapping_type transformer  --num_layres 8 --prefix_length 40 --prefix_length_clip 40

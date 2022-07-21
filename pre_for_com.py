@@ -21,6 +21,8 @@ import skimage.io as io
 import PIL.Image
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
+import time
+device = torch.device("cuda")
 
 #import cog
 
@@ -107,6 +109,7 @@ class Predictor():
             return generate_beam(model, self.tokenizer, embed=prefix_embed)[0]
         else:
             return generate2(model, self.tokenizer, embed=prefix_embed)
+
 
 
 class MLP(nn.Module):
@@ -238,16 +241,7 @@ def generate_beam(
                 generated.shape[0], 1, -1
             )
             generated = torch.cat((generated, next_token_embed), dim=1)
-            #is_stopped = is_stopped + next_tokens.eq(stop_token_index).squeeze()
-            next_tokens_np = next_tokens.cpu().numpy()
-            bool_stop = []
-            for t in next_tokens_np:
-                if stop_token == tokenizer.decode(t):
-                    bool_stop.append(True)
-                else:
-                    bool_stop.append(False)
-            #stop_token == tokenizer.decode(next_token.item())
-            is_stopped = is_stopped + torch.from_numpy(np.array(bool_stop)).to(device)
+            is_stopped = is_stopped + next_tokens.eq(stop_token_index).squeeze()
             if is_stopped.all():
                 break
     scores = scores / seq_lengths
@@ -317,7 +311,7 @@ def generate2(
                     else:
                         tokens = torch.cat((tokens, next_token), dim=1)
                     generated = torch.cat((generated, next_token_embed), dim=1)
-                    if stop_token==tokenizer.decode(next_token.item()):#stop_token_index == next_token.item():
+                    if stop_token_index == next_token.item():
                         break
 
                 if len(tokens.squeeze().cpu().numpy().shape) == 0:
@@ -404,8 +398,7 @@ def predict_rgb_and_ir(path_weights_model, path_images):
 
 if __name__ == '__main__':
     #path_weights_model = './checkpoints/koronos_rsicd_prefix_29_GPT_beam15/koronos_rsicd_prefix_GPT_beam15-012.pt'
-    #path_weights_model = './checkpoints/kronos_prefix_GPT_30_14epoch_lrS_2190_trail_15sh/kronos_prefix_GPT_30_14epoch_lrS_2190_trail_15sh-005.pt'
-    path_weights_model = './checkpoints/kronos_rsicd_prefix_coco_origin_004/kronos_rsicd_prefix_coco_origin_004-001.pt'
+    path_weights_model = './checkpoints/kronos_prefix_GPT_30_14epoch_lrS_2190_trail_15sh/kronos_prefix_GPT_30_14epoch_lrS_2190_trail_15sh-005.pt'
     #path_weights_model = './checkpoints/rsicd_prefix_GPT_beam_50epoch/rsicd_prefix_GPT_beam_50epoch-049.pt'
     #path_images = './data/koronos/test_kor/test_ir_and_rgb'
     #path_i = "beach_108.jpg"#,"beach_108.jpg","airport_348.jpg","commercial_36.jpg","farmland_366.jpg"
@@ -426,27 +419,24 @@ if __name__ == '__main__':
     prefix_length = 10
     model = 'coco'  # 'conceptual-captions'
     Pre = Predictor(path_weights_model, model)
-    gen_to_save = pd.DataFrame(columns=['img_type','img_name', 'caption_gen2', 'caption_beamGen'])
-    for doc in os.listdir("./data/koronos/test_kor"):
-        for file in os.listdir("./data/koronos/test_kor/"+doc):
-            UPLOADED_FILE = os.path.join("./data/koronos/test_kor",doc, file)
-            print(file)
+    gen_results = []
+    start = time.time()
+    for file in os.listdir("./data/koronos/test_kor/sim_images"):
+        UPLOADED_FILE = os.path.join("./data/koronos/test_kor/sim_images", file)
 
-            gen2 = Pre.predict(UPLOADED_FILE,model, False)
-            beam_gen = Pre.predict(UPLOADED_FILE, model, True)
+        gen2 = Pre.predict(UPLOADED_FILE,model, False)
+        gen_results.append((file,gen2))
+    print(f'genereted time:{time.time()-start}')
+    for gen in gen_results:
+        print(gen[0])
+        print(gen[1])
+        print('*'*20)
 
-            img = cv2.imread(UPLOADED_FILE)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            img = PIL.Image.fromarray(img)
-            img.show()
 
-            print(gen2)
-            print(beam_gen)
-            print(80*"*")
+    print(gen2)
+    print(80*"*")
 
-            gen_to_save = gen_to_save.append({'img_type':str(doc),'img_name':str(file), 'caption_gen2':gen2, 'caption_beamGen':beam_gen},ignore_index=True)
 
-    gen_to_save.to_csv('/home/dvir/Desktop/Projects/CLIP_prefix_caption/data/koronos/models_results/'+path_weights_model.split('/')[-1].split('.')[0]+'.csv')
 
 
 
